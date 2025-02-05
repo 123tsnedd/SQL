@@ -21,11 +21,35 @@ FOR VALUES FROM ('2024-12-01') TO ('2025-01-01')
 
 CREATE OR REPLACE FUNCTION insert_user_logs()
 RETURNS TRIGGER AS $$
+DECLARE
+  partition_ts TIMESTAMPTZ;
+  partition_device TEXT;
+  partition_msg JSONB;
+  partition_ec TEXT;
+  partition_exists BOOLEAN;
+  partition_table_name TEXT;
 	BEGIN
+  partition_ts := NEW.ts;
+  partition_device := NEW.device;
+  partition_msg := NEW.msg;
+  partition_ec := NEW.ec;
+  partition_table_name := 'user_log_partition_' || TO_CHAR(partition_ts, 'YYYY_MM');
+
   	IF NEW.ec = 'user_log' THEN
-    	INSERT INTO user_log_partition (ts, device, msg, ec)
-      VALUES (NEW.ts, NEW.device, NEW.msg, NEW.ec);
+    	RETURN NEW;
+    ELSE 
+      RETURN new;
     END IF;
+  -- check if exists
+  SELECT EXISTS(
+    SELECT 1 FROM pg_catalog.pg_tables WHERE tablename = partition_table_name
+    )INTO partition_exists;
+  IF partition_exists THEN
+    'INSERT INTO %I (ts, device, msg, ec) VALUES ($1, $2, $3, $4)',
+    partition_table_name
+    ) USING partition_ts, partition_device, partition_msg, partition_ec;
+  END IF;
+  
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

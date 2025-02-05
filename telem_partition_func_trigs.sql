@@ -71,36 +71,49 @@ DECLARE
   partition_device TEXT;
   partition_msg JSONB;
   partition_ec TEXT;
+  partition_exists BOOLEAN;
+  partition_table_name TEXT;
 BEGIN
 -- assign default vals
 	partition_ts := NEW.ts;
   partition_device := NEW.device;
   partition_msg := NEW.msg;
   partition_ec := NEW.ec;
+  partition_table_name := 'telem_partition_' || TO_CHAR(partition_ts, 'YYYY_MM');
+
   -- Insert only if matches specified conditions
   IF NEW.device = 'observers' THEN
-  	NULL; -- NO OTher action at this time
+  	RETURN NEW; -- NO OTher action at this time
     
   ELSIF NEW.ec = 'telem_stdcam' AND NEW.device IN ('camsci1', 'camsci2', 'camwfs') THEN
-    NULL; -- assigned by defualt will only take what matches statements
+    RETURN NEW; -- assigned by defualt will only take what matches statements
   
   ELSIF NEW.ec = 'telem_loopgain' AND NEW.device = 'holoop' THEN
-  	NULL;
+  	RETURN NEW;
     
   ELSIF NEW.ec = 'telem_telsee' AND NEW.device = 'tcsi' THEN
-    NULL;
+    RETURN NEW;
   
   ELSIF NEW.ec = 'telem_stage' AND NEW.device IN ('fwsci1', 'fwsci2', 'flipacq',
                                                  'stagebs', 'fwpupil', 'fwfpm',
                                                  'fwlyot', 'stagescibs', 'flipwfsf') THEN
-    NULL;
+    RETURN NEW;
    ELSE
    	-- NO CONditions met, skip insert
     	RETURN NEW;
   END IF;
+  --CHECK TO make sure partition first exists
+  SELECT EXISTS(
+    SELECT 1 FROM pg_catalog.pg_tables WHERE tablename = partition_table_name
+  ) INTO partition_exists;
   -- perform insert here
-  	INSERT INTO telem_partition (ts, device, msg, ec)
-    VALUES (partition_ts, partition_device, partition_msg, partition_ec);  
+  IF partition_exists THEN
+  	EXECUTE FORMAT (
+      'INSERT INTO %I (ts, device, msg, ec) VALUES ($1, $2, $3, $4)',
+      partition_table_name
+    ) USING partition_ts, partition_device, partition_msg, partition_ec; 
+  END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -110,37 +123,4 @@ CREATE TRIGGER after_insert_telem
 AFTER INSERT ON telem
 FOR EACH ROW
 EXECUTE FUNCTION insert_into_partition();
-
-
-select * from telem_2024_11
-WHERE ts >= '2024-11-10'
-
-LIMIT 1000
-;
-
-
---think there are duplicates
-CREATE TABLE unique_rows AS
-WITH CTE AS (
-  SELECT *, ROW_NUMBER() 
-  	OVER (PARTITION BY ts ORDER BY ts) AS row_num
-  FROM telem_partition
-)
-SELECT *
-FROM CTE
-WHERE row_num = 1;
-
---DELETE ROWS FROM telem_partition
-DELETE FROM telem_partition;
-
---insert unique back into partition
-INSERT INTO telem_partition
-SELECT ts, device, msg, ec
-FROM unique_rows;
-
---drop temp table
-DROP TABLE unique_rows;
-
-
-
 
